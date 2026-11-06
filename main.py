@@ -8,7 +8,6 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
 app = Flask(__name__)
 
-# 讀取雲端環境變數
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 LINE_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_SECRET = os.getenv("LINE_CHANNEL_SECRET")
@@ -16,16 +15,16 @@ LINE_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 line_bot_api = LineBotApi(LINE_TOKEN) if LINE_TOKEN else None
 line_handler = WebhookHandler(LINE_SECRET) if LINE_SECRET else None
 
-# PTT / JPTT 雙重檢測邏輯 (修正版)
+# PTT / JPTT 雙重檢測邏輯 (TCP 連線優化版)
 def check_ptt_status():
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 JPTT'
     }
     
-    # 1. 檢測 PTT 主站
+    # 1. 檢測 PTT 主站 (Web 與 Telnet/SSH)
     ptt_ok = False
     try:
-        r = requests.get('https://www.ptt.cc/bbs/index.html', headers=headers, timeout=5)
+        r = requests.get('https://www.ptt.cc/bbs/index.html', headers=headers, timeout=4)
         if r.status_code == 200:
             ptt_ok = True
     except:
@@ -33,21 +32,29 @@ def check_ptt_status():
 
     if not ptt_ok:
         try:
-            s = socket.create_connection(('ptt.cc', 23), timeout=5)
+            s = socket.create_connection(('ptt.cc', 23), timeout=4)
             s.close()
             ptt_ok = True
         except:
             pass
 
-    # 2. 檢測 JPTT API
+    # 2. 檢測 JPTT 伺服器 (優先使用 TCP 443 埠連線測試，避開 HTTP 爬蟲封鎖)
     jptt_ok = False
     try:
-        res = requests.get('https://api.jptt.cc/v1/hot_articles', headers=headers, timeout=5)
-        # 只要伺服器有回應 (狀態碼小於 500 代表伺服器運作中)
-        if res.status_code < 500:
-            jptt_ok = True
+        s = socket.create_connection(('api.jptt.cc', 443), timeout=4)
+        s.close()
+        jptt_ok = True
     except:
         pass
+
+    # 備用檢測：若 TCP 測試失敗，嘗試 HTTP 請求
+    if not jptt_ok:
+        try:
+            res = requests.get('https://api.jptt.cc/v1/hot_articles', headers=headers, timeout=4)
+            if res.status_code < 500:
+                jptt_ok = True
+        except:
+            pass
 
     # 3. 診斷結果判斷
     if not ptt_ok:
