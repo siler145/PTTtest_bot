@@ -16,11 +16,16 @@ LINE_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 line_bot_api = LineBotApi(LINE_TOKEN) if LINE_TOKEN else None
 line_handler = WebhookHandler(LINE_SECRET) if LINE_SECRET else None
 
-# PTT / JPTT 雙重檢測邏輯
+# PTT / JPTT 雙重檢測邏輯 (修正版)
 def check_ptt_status():
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    # 1. 檢測 PTT 主站
     ptt_ok = False
     try:
-        r = requests.get('https://www.ptt.cc/bbs/index.html', timeout=3)
+        r = requests.get('https://www.ptt.cc/bbs/index.html', headers=headers, timeout=5)
         if r.status_code == 200:
             ptt_ok = True
     except:
@@ -28,20 +33,23 @@ def check_ptt_status():
 
     if not ptt_ok:
         try:
-            s = socket.create_connection(('ptt.cc', 23), timeout=3)
+            s = socket.create_connection(('ptt.cc', 23), timeout=5)
             s.close()
             ptt_ok = True
         except:
             pass
 
+    # 2. 檢測 JPTT API
     jptt_ok = False
     try:
-        res = requests.get('https://api.jptt.cc/v1/hot_articles', timeout=3)
-        if res.status_code in [200, 401, 403]:
+        res = requests.get('https://api.jptt.cc/v1/hot_articles', headers=headers, timeout=5)
+        # 只要伺服器有回應 (狀態碼小於 500 代表伺服器運作中)
+        if res.status_code < 500:
             jptt_ok = True
     except:
         pass
 
+    # 3. 診斷結果判斷
     if not ptt_ok:
         return "❌ PTT 全面宕機！\n主站與 Web 版均無法連線。"
     elif ptt_ok and not jptt_ok:
