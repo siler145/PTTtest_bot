@@ -20,15 +20,25 @@ def check_ptt_status():
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
+    cookies = {'over18': '1'}
     
     # 1. 檢測 Web 網頁版
     web_ok = False
     try:
-        r = requests.get('https://www.ptt.cc/bbs/index.html', headers=headers, timeout=4)
-        if r.status_code == 200:
+        r = requests.get('https://www.ptt.cc/bbs/index.html', headers=headers, cookies=cookies, timeout=4)
+        if r.status_code < 500:  # 只要不是 5xx 伺服器錯誤都算 Web 服務存活
             web_ok = True
     except:
         pass
+
+    # 備用檢測：若 HTTP 被阻擋，改測 www.ptt.cc 443 埠連線
+    if not web_ok:
+        try:
+            s = socket.create_connection(('www.ptt.cc', 443), timeout=4)
+            s.close()
+            web_ok = True
+        except:
+            pass
 
     # 2. 檢測 SSH 通道 (ptt.cc:22)
     ssh_ok = False
@@ -64,7 +74,6 @@ def check_ptt_status():
     if not web_ok and not ssh_ok and not telnet_ok and not jptt_ok:
         return "❌ PTT 全面宕機！\nWeb、SSH、Telnet 與 WebSocket 均無回應。"
 
-    # 部分通道異常時，列出明細
     report = ["📊 PTT / JPTT 連線通道診斷報告："]
     report.append(f"🌐 網頁版 (Web): {'✅ 正常' if web_ok else '❌ 斷線'}")
     report.append(f"🔒 SSH 通道 (Port 22): {'✅ 正常' if ssh_ok else '❌ 斷線'}")
