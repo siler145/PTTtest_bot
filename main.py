@@ -15,54 +15,71 @@ LINE_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 line_bot_api = LineBotApi(LINE_TOKEN) if LINE_TOKEN else None
 line_handler = WebhookHandler(LINE_SECRET) if LINE_SECRET else None
 
-# PTT / JPTT 雙重檢測邏輯 (TCP 連線優化版)
+# PTT (Web / SSH / Telnet) 與 JPTT (WebSocket) 完整四通道診斷邏輯
 def check_ptt_status():
     headers = {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 JPTT'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
-    # 1. 檢測 PTT 主站 (Web 與 Telnet/SSH)
-    ptt_ok = False
+    # 1. 檢測 Web 網頁版
+    web_ok = False
     try:
         r = requests.get('https://www.ptt.cc/bbs/index.html', headers=headers, timeout=4)
         if r.status_code == 200:
-            ptt_ok = True
+            web_ok = True
     except:
         pass
 
-    if not ptt_ok:
-        try:
-            s = socket.create_connection(('ptt.cc', 23), timeout=4)
-            s.close()
-            ptt_ok = True
-        except:
-            pass
+    # 2. 檢測 SSH 通道 (ptt.cc:22)
+    ssh_ok = False
+    try:
+        s = socket.create_connection(('ptt.cc', 22), timeout=4)
+        s.close()
+        ssh_ok = True
+    except:
+        pass
 
-    # 2. 檢測 JPTT 伺服器 (優先使用 TCP 443 埠連線測試，避開 HTTP 爬蟲封鎖)
+    # 3. 檢測 Telnet 通道 (ptt.cc:23)
+    telnet_ok = False
+    try:
+        s = socket.create_connection(('ptt.cc', 23), timeout=4)
+        s.close()
+        telnet_ok = True
+    except:
+        pass
+
+    # 4. 檢測 JPTT WebSocket 通道 (ws.ptt.cc:443)
     jptt_ok = False
     try:
-        s = socket.create_connection(('api.jptt.cc', 443), timeout=4)
+        s = socket.create_connection(('ws.ptt.cc', 443), timeout=4)
         s.close()
         jptt_ok = True
     except:
         pass
 
-    # 備用檢測：若 TCP 測試失敗，嘗試 HTTP 請求
-    if not jptt_ok:
-        try:
-            res = requests.get('https://api.jptt.cc/v1/hot_articles', headers=headers, timeout=4)
-            if res.status_code < 500:
-                jptt_ok = True
-        except:
-            pass
+    # 5. 彙整診斷報告
+    if web_ok and ssh_ok and telnet_ok and jptt_ok:
+        return "✅ PTT 所有連線通道 (Web / SSH / Telnet / JPTT) 均正常！\n若仍無法登入，請嘗試切換手機網路 IP (開關飛行模式)。"
+    
+    if not web_ok and not ssh_ok and not telnet_ok and not jptt_ok:
+        return "❌ PTT 全面宕機！\nWeb、SSH、Telnet 與 WebSocket 均無回應。"
 
-    # 3. 診斷結果判斷
-    if not ptt_ok:
-        return "❌ PTT 全面宕機！\n主站與 Web 版均無法連線。"
-    elif ptt_ok and not jptt_ok:
-        return "⚠️ PTT 主站正常，但 JPTT 伺服器異常！\n請改用 Pitt、Mo PTT 或 Web 版登入。"
-    else:
-        return "✅ PTT 與 JPTT 連線均正常！\n若仍無法登入，請檢查個人帳密或切換 IP (開關飛行模式)。"
+    # 部分通道異常時，列出明細
+    report = ["📊 PTT / JPTT 連線通道診斷報告："]
+    report.append(f"🌐 網頁版 (Web): {'✅ 正常' if web_ok else '❌ 斷線'}")
+    report.append(f"🔒 SSH 通道 (Port 22): {'✅ 正常' if ssh_ok else '❌ 斷線'}")
+    report.append(f"📞 Telnet 通道 (Port 23): {'✅ 正常' if telnet_ok else '❌ 斷線'}")
+    report.append(f"⚡ JPTT 通道 (ws.ptt.cc:443): {'✅ 正常' if jptt_ok else '❌ 斷線'}")
+
+    report.append("\n💡 診斷建議：")
+    if not jptt_ok:
+        report.append("• JPTT 目前連線異常！" + (" 但可改用 SSH 或網頁版登入。" if (ssh_ok or web_ok) else ""))
+    if not ssh_ok:
+        report.append("• SSH 通道無法連線。")
+    if web_ok:
+        report.append("• 網頁版依然正常，可先開啟瀏覽器看板。")
+
+    return "\n".join(report)
 
 # --- LINE Webhook 接收點 ---
 @app.route("/callback/line", methods=['POST'])
